@@ -8,6 +8,7 @@
  * PERBAIKAN: Kompatibilitas path migrations dan template parsing untuk semua OS.
  * PERBAIKAN: Prioritas icon berbasis platform untuk systray yang optimal.
  * FITUR BARU: Auto-generate file .env dengan JWT secret yang aman.
+ * FITUR BARU: Virtual Host Setup otomatis untuk domain lokal (simdokpol.local).
  */
 package main
 
@@ -28,6 +29,7 @@ import (
 	"simdokpol/internal/middleware"
 	"simdokpol/internal/repositories"
 	"simdokpol/internal/services"
+	"simdokpol/internal/utils"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +55,12 @@ var version = "dev"
 
 const (
 	defaultPort = ":8080"
-	localURL    = "http://localhost:8080"
+	defaultURL  = "http://localhost:8080"
+)
+
+var (
+	vhostSetup *utils.VHostSetup
+	appURL     string
 )
 
 func getExecutableDir() string {
@@ -65,7 +72,47 @@ func getExecutableDir() string {
 }
 
 func main() {
+	// Inisialisasi vhost setup
+	vhostSetup = utils.NewVHostSetup()
+	
+	// Cek dan setup vhost jika diperlukan
+	setupVirtualHost()
+	
+	// Tentukan URL yang akan digunakan
+	isSetup, _ := vhostSetup.IsSetup()
+	if isSetup {
+		appURL = vhostSetup.GetURL("8080")
+		log.Printf("INFO: Aplikasi akan diakses melalui: %s", appURL)
+	} else {
+		appURL = defaultURL
+		log.Printf("INFO: Aplikasi akan diakses melalui: %s", appURL)
+	}
+	
 	systray.Run(onReady, onExit)
+}
+
+func setupVirtualHost() {
+	log.Println("INFO: Memeriksa konfigurasi virtual host...")
+	
+	isSetup, err := vhostSetup.IsSetup()
+	if err != nil {
+		log.Printf("PERINGATAN: Gagal memeriksa status virtual host: %v", err)
+		log.Println("INFO: Aplikasi akan menggunakan localhost")
+		return
+	}
+	
+	if isSetup {
+		log.Printf("INFO: Virtual host %s sudah dikonfigurasi", vhostSetup.GetDomain())
+		return
+	}
+	
+	log.Println("INFO: Virtual host belum dikonfigurasi, mencoba setup otomatis...")
+	
+	// Coba setup otomatis
+	if err := vhostSetup.Setup(); err != nil {
+		log.Printf("PERINGATAN: Setup otomatis virtual host gagal: %v", err)
+		log.Println("INFO: Silakan lihat instruksi manual di atas atau gunakan localhost")
+	}
 }
 
 func onReady() {
@@ -76,21 +123,18 @@ func onReady() {
 	
 	switch runtime.GOOS {
 	case "windows":
-		// Windows: prioritas .ico, fallback ke .png
 		iconPaths = []string{
 			filepath.Join(exeDir, "web", "static", "img", "icon.ico"),
 			filepath.Join(exeDir, "web", "static", "img", "icon.png"),
 		}
 		log.Printf("INFO: Sistem operasi terdeteksi: Windows - mencoba format .ico terlebih dahulu")
 	case "darwin":
-		// macOS: prioritas .png, fallback ke .ico
 		iconPaths = []string{
 			filepath.Join(exeDir, "web", "static", "img", "icon.png"),
 			filepath.Join(exeDir, "web", "static", "img", "icon.ico"),
 		}
 		log.Printf("INFO: Sistem operasi terdeteksi: macOS - mencoba format .png terlebih dahulu")
 	default:
-		// Linux dan OS lainnya: hanya .png
 		iconPaths = []string{
 			filepath.Join(exeDir, "web", "static", "img", "icon.png"),
 		}
@@ -112,6 +156,15 @@ func onReady() {
 
 	mOpen := systray.AddMenuItem("Buka Aplikasi", "Buka SIMDOKPOL di browser")
 	systray.AddSeparator()
+	
+	// Menu tambahan untuk info domain
+	isSetup, _ := vhostSetup.IsSetup()
+	if isSetup {
+		mDomain := systray.AddMenuItem(fmt.Sprintf("Domain: %s", vhostSetup.GetDomain()), "Domain virtual host")
+		mDomain.Disable()
+		systray.AddSeparator()
+	}
+	
 	mQuit := systray.AddMenuItem("Keluar", "Tutup aplikasi")
 
 	go startWebServer()
@@ -119,21 +172,22 @@ func onReady() {
 	go func() {
 		time.Sleep(1 * time.Second)
 		notifyIconPath := filepath.Join(exeDir, "web", "static", "img", "icon.png")
-		if err := beeep.Notify("SIMDOKPOL", "Aplikasi sedang berjalan di latar belakang.", notifyIconPath); err != nil {
+		notifyMsg := fmt.Sprintf("Aplikasi berjalan di: %s", appURL)
+		if err := beeep.Notify("SIMDOKPOL", notifyMsg, notifyIconPath); err != nil {
 			log.Printf("PERINGATAN: Gagal menampilkan notifikasi: %v", err)
 		}
 	}()
 
 	go func() {
 		time.Sleep(2 * time.Second)
-		openBrowser(localURL)
+		openBrowser(appURL)
 	}()
 
 	go func() {
 		for {
 			select {
 			case <-mOpen.ClickedCh:
-				openBrowser(localURL)
+				openBrowser(appURL)
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 			}
@@ -181,7 +235,8 @@ func startWebServer() {
 	repos, svcs, ctrls := setupDependencies(db, cfg)
 	router := setupRouter(repos.UserRepo, svcs, ctrls, exeDir)
 
-	log.Printf("INFO: Server web dimulai di %s", localURL)
+	log.Printf("INFO: Server web dimulai di %s", appURL)
+	log.Printf("INFO: Server mendengarkan pada port %s", defaultPort)
 
 	if err := router.Run(defaultPort); err != nil {
 		log.Fatalf("FATAL: Gagal menjalankan server: %v", err)
