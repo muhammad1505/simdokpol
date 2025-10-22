@@ -24,7 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
+      previous_tag: ${{ steps.get_tags.outputs.PREVIOUS_TAG }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Get version number
         id: get_version
         run: |
@@ -33,6 +39,139 @@ jobs:
           else
             echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Get previous tag
+        id: get_tags
+        run: |
+          CURRENT_TAG="${GITHUB_REF#refs/tags/}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            CURRENT_TAG="v${{ github.event.inputs.version }}"
+          fi
+          
+          PREVIOUS_TAG=$(git tag --sort=-v:refname | grep -v "^${CURRENT_TAG}$" | head -n 1)
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD)
+          fi
+          
+          echo "PREVIOUS_TAG=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+          echo "Current tag: $CURRENT_TAG"
+          echo "Previous tag: $PREVIOUS_TAG"
+
+  generate-changelog:
+    name: Generate Changelog from Commits
+    needs: prepare
+    runs-on: ubuntu-latest
+    outputs:
+      changelog: ${{ steps.create_changelog.outputs.CHANGELOG }}
+      changelog_file: ${{ steps.create_changelog.outputs.CHANGELOG_FILE }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog from commits
+        id: create_changelog
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          PREVIOUS_TAG="${{ needs.prepare.outputs.previous_tag }}"
+          CURRENT_TAG="v${VERSION}"
+          
+          echo "Generating changelog from $PREVIOUS_TAG to $CURRENT_TAG"
+          
+          CHANGELOG_FILE="CHANGELOG_${VERSION}.md"
+          
+          {
+            echo "## 🚀 SIMDOKPOL v${VERSION}"
+            echo ""
+            echo "Rilis stabil baru untuk **SIMDOKPOL** - Sistem Informasi Manajemen Dokumen Kepolisian."
+            echo ""
+            echo "---"
+            echo ""
+            
+            FEATURES=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"%s" --grep="^feat" --grep="^feature" -i)
+            if [ ! -z "$FEATURES" ]; then
+              echo "### ✨ Fitur Baru"
+              echo ""
+              echo "$FEATURES" | while read -r line; do
+                CLEAN_LINE=$(echo "$line" | sed 's/^feat://i' | sed 's/^feature://i' | sed 's/^ *//')
+                echo "- $CLEAN_LINE"
+              done
+              echo ""
+            fi
+            
+            IMPROVEMENTS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"%s" --grep="^improve" --grep="^enhancement" --grep="^perf" -i)
+            if [ ! -z "$IMPROVEMENTS" ]; then
+              echo "### 🚀 Peningkatan"
+              echo ""
+              echo "$IMPROVEMENTS" | while read -r line; do
+                CLEAN_LINE=$(echo "$line" | sed 's/^improve://i' | sed 's/^enhancement://i' | sed 's/^perf://i' | sed 's/^ *//')
+                echo "- $CLEAN_LINE"
+              done
+              echo ""
+            fi
+            
+            FIXES=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"%s" --grep="^fix" --grep="^bugfix" -i)
+            if [ ! -z "$FIXES" ]; then
+              echo "### 🐛 Bug Fixes"
+              echo ""
+              echo "$FIXES" | while read -r line; do
+                CLEAN_LINE=$(echo "$line" | sed 's/^fix://i' | sed 's/^bugfix://i' | sed 's/^ *//')
+                echo "- $CLEAN_LINE"
+              done
+              echo ""
+            fi
+            
+            SECURITY=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"%s" --grep="^security" --grep="^sec:" -i)
+            if [ ! -z "$SECURITY" ]; then
+              echo "### 🔒 Keamanan"
+              echo ""
+              echo "$SECURITY" | while read -r line; do
+                CLEAN_LINE=$(echo "$line" | sed 's/^security://i' | sed 's/^sec://i' | sed 's/^ *//')
+                echo "- $CLEAN_LINE"
+              done
+              echo ""
+            fi
+            
+            DOCS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"%s" --grep="^docs" -i)
+            if [ ! -z "$DOCS" ]; then
+              echo "### 📚 Dokumentasi"
+              echo ""
+              echo "$DOCS" | while read -r line; do
+                CLEAN_LINE=$(echo "$line" | sed 's/^docs://i' | sed 's/^ *//')
+                echo "- $CLEAN_LINE"
+              done
+              echo ""
+            fi
+            
+            OTHER=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"%s" --invert-grep --grep="^feat" --grep="^feature" --grep="^fix" --grep="^bugfix" --grep="^improve" --grep="^enhancement" --grep="^perf" --grep="^security" --grep="^sec:" --grep="^docs" -i)
+            if [ ! -z "$OTHER" ]; then
+              echo "### 🔧 Perubahan Lainnya"
+              echo ""
+              echo "$OTHER" | while read -r line; do
+                echo "- $line"
+              done
+              echo ""
+            fi
+            
+            echo "---"
+            echo ""
+          } > "$CHANGELOG_FILE"
+          
+          echo "CHANGELOG_FILE=$CHANGELOG_FILE" >> $GITHUB_OUTPUT
+          
+          CHANGELOG_CONTENT=$(cat "$CHANGELOG_FILE")
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: CHANGELOG_*.md
+          retention-days: 5
 
   build-windows:
     name: Build untuk Windows (x64)
@@ -270,7 +409,7 @@ jobs:
           !define APP_NAME "SIMDOKPOL"
           !define VERSION "${{ needs.prepare.outputs.version }}"
           !define PUBLISHER "SIMDOKPOL Team"
-          !define WEB_SITE "https://github.com/yourusername/simdokpol"
+          !define WEB_SITE "https://github.com/muhammad1505/simdokpol"
           !define INSTALLER_NAME "${{ env.APP_NAME }}-windows-x64-v${{ needs.prepare.outputs.version }}-installer.exe"
           
           Name "${APP_NAME} ${VERSION}"
@@ -752,10 +891,13 @@ jobs:
 
   create-release:
     name: Create GitHub Release
-    needs: [prepare, build-windows, build-linux, build-macos]
+    needs: [prepare, generate-changelog, build-windows, build-linux, build-macos]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -766,280 +908,184 @@ jobs:
         run: |
           set -e
           mkdir -p release-assets
-          find artifacts -type f -exec mv {} release-assets/ \;
+          find artifacts -type f -name "*.zip" -o -name "*.exe" -o -name "*.deb" -o -name "*.rpm" -o -name "*.dmg" -o -name "*.tar.gz" | while read file; do
+            mv "$file" release-assets/
+          done
           cd release-assets
           sha256sum * > checksums.txt
           ls -lh
           echo "ASSETS_PATH=release-assets/*" >> $GITHUB_OUTPUT
+
+      - name: Create release notes template
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          
+          cat > release-notes.md << 'EOF'
+          ${{ needs.generate-changelog.outputs.changelog }}
+          
+          ---
+          
+          ### 📦 Windows (x64)
+          
+          **Installer (Recommended)**
+          - `simdokpol-windows-x64-v${{ needs.prepare.outputs.version }}-installer.exe`
+            - ✅ Instalasi otomatis ke Program Files
+            - ✅ Shortcut desktop & Start Menu
+            - ✅ Uninstaller terintegrasi
+            - ✅ Icon aplikasi menarik
+            - ✅ GUI mode & Console mode
+          
+          **Portable**
+          - `simdokpol-windows-x64-v${{ needs.prepare.outputs.version }}-portable.zip`
+            - 📁 Extract & run, tidak perlu install
+            - 💾 Cocok untuk USB drive
+          
+          ---
+          
+          ### 🐧 Linux (amd64)
+          
+          **DEB Package (Ubuntu/Debian)**
+          - `simdokpol_${{ needs.prepare.outputs.version }}_amd64.deb`
+            ```bash
+            sudo dpkg -i simdokpol_${{ needs.prepare.outputs.version }}_amd64.deb
+            sudo apt-get install -f
+            ```
+            - ✅ Menu entry otomatis
+            - ✅ Icon desktop
+            - ✅ Systemd integration ready
+          
+          **RPM Package (Fedora/RHEL/CentOS)**
+          - `simdokpol-${{ needs.prepare.outputs.version }}-1.*.rpm`
+            ```bash
+            sudo rpm -i simdokpol-${{ needs.prepare.outputs.version }}-1.*.rpm
+            ```
+          
+          **Portable**
+          - `simdokpol-linux-amd64-v${{ needs.prepare.outputs.version }}-portable.tar.gz`
+            ```bash
+            tar -xzf simdokpol-linux-amd64-v${{ needs.prepare.outputs.version }}-portable.tar.gz
+            cd simdokpol
+            ./start.sh
+            ```
+          
+          ---
+          
+          ### 🍎 macOS (amd64)
+          
+          **DMG Installer (Recommended)**
+          - `simdokpol-macos-amd64-v${{ needs.prepare.outputs.version }}-installer.dmg`
+            - ✅ Drag & drop ke Applications
+            - ✅ macOS App Bundle native
+            - ✅ Icon aplikasi terintegrasi
+            - ✅ Compatible dengan Intel & Apple Silicon (via Rosetta 2)
+          
+          **Portable**
+          - `simdokpol-macos-amd64-v${{ needs.prepare.outputs.version }}-portable.zip`
+            - 📁 Extract & run SIMDOKPOL.app
+          
+          ---
+          
+          ### 🔐 Verifikasi Integritas
+          
+          Gunakan file `checksums.txt` untuk memverifikasi integritas file yang diunduh:
+          
+          **Linux/macOS:**
+          ```bash
+          sha256sum -c checksums.txt
+          ```
+          
+          **Windows (PowerShell):**
+          ```powershell
+          Get-Content checksums.txt | ForEach-Object {
+              $hash, $file = $_ -split '\s+', 2
+              $computed = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
+              if ($computed -eq $hash) { 
+                  Write-Host "✓ $file" -ForegroundColor Green 
+              } else { 
+                  Write-Host "✗ $file" -ForegroundColor Red 
+              }
+          }
+          ```
+          
+          ---
+          
+          ### 📝 Petunjuk Instalasi
+          
+          #### Windows
+          1. Download installer `.exe`
+          2. Jalankan installer (Klik kanan → Run as Administrator jika perlu)
+          3. Ikuti wizard instalasi
+          4. Jalankan dari Start Menu atau Desktop shortcut
+          
+          #### Linux (DEB/RPM)
+          1. Download package sesuai distro
+          2. Install menggunakan package manager
+          3. Jalankan dari Application Menu atau terminal: `simdokpol`
+          
+          #### macOS
+          1. Download file `.dmg`
+          2. Buka DMG dan drag SIMDOKPOL.app ke Applications
+          3. Jalankan dari Launchpad atau Applications folder
+          4. Jika muncul warning "from unidentified developer":
+             - Buka System Preferences → Security & Privacy
+             - Klik "Open Anyway"
+          
+          ---
+          
+          ### 🚀 Menjalankan Aplikasi
+          
+          Setelah instalasi selesai, cukup jalankan aplikasi melalui shortcut yang tersedia. Aplikasi akan otomatis membuka browser dan menampilkan halaman aplikasi, berjalan di background dengan icon di system tray, menampilkan notifikasi saat siap digunakan, generate file `.env` dengan JWT secret yang aman secara otomatis, serta membuat folder backups untuk database.
+          
+          **Setup Pertama Kali:**
+          Anda akan diarahkan ke halaman setup untuk membuat akun admin pertama. Ikuti wizard setup yang mudah dan intuitif. File `.env` akan dibuat otomatis dengan konfigurasi keamanan yang optimal tanpa memerlukan konfigurasi manual.
+          
+          ---
+          
+          ### 🆘 Troubleshooting
+          
+          **Port 8080 sudah digunakan?**
+          Edit file `.env` di folder instalasi aplikasi, ganti `PORT=8080` ke port lain (misal `PORT=8081`), kemudian restart aplikasi.
+          
+          **Aplikasi tidak muncul di system tray?**
+          Pastikan desktop environment Anda mendukung system tray. Untuk Linux, pastikan ekstensi AppIndicator terinstall. Untuk Windows, cek Windows Notification Settings dan pastikan aplikasi diizinkan. Untuk macOS, periksa System Preferences → Notifications.
+          
+          **File .env tidak ditemukan?**
+          Aplikasi akan membuat file `.env` secara otomatis saat pertama kali dijalankan. Jika file hilang atau rusak, hapus dan restart aplikasi untuk regenerasi otomatis. JWT secret key akan di-generate ulang dengan algoritma cryptographically secure.
+          
+          ---
+          
+          ### 📚 Dokumentasi & Support
+          
+          - 📖 **Dokumentasi Lengkap**: [README.md](https://github.com/muhammad1505/simdokpol)
+          - 🐛 **Laporkan Bug**: [Issues](https://github.com/muhammad1505/simdokpol/issues)
+          - 💬 **Diskusi & Pertanyaan**: [Discussions](https://github.com/muhammad1505/simdokpol/discussions)
+          - 📧 **Kontak**: emailbaruku50@gmail.com
+          
+          ---
+          
+          ### 🙏 Kontribusi
+          
+          Kami sangat menghargai kontribusi dari komunitas. Jika Anda ingin berkontribusi, fork repository ini, buat branch untuk fitur baru Anda, submit pull request dengan deskripsi yang jelas, dan pastikan code Anda mengikuti style guide yang ada.
+          
+          ---
+          
+          ### 📜 Lisensi
+          
+          SIMDOKPOL dirilis di bawah lisensi MIT. Lihat file LICENSE untuk detail lengkap.
+          
+          ---
+          
+          **Terima kasih telah menggunakan SIMDOKPOL!** 🙏
+          
+          Jika aplikasi ini membantu pekerjaan Anda, pertimbangkan untuk memberikan ⭐ star di repository ini!
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: Release v${{ needs.prepare.outputs.version }}
           tag_name: v${{ needs.prepare.outputs.version }}
-          body: |
-            ## 🚀 SIMDOKPOL v${{ needs.prepare.outputs.version }}
-            
-            Rilis stabil baru untuk **SIMDOKPOL** - Sistem Informasi Manajemen Dokumen Kepolisian.
-            
-            ---
-            
-            ### 📦 Windows (x64)
-            
-            **Installer (Recommended)**
-            - `simdokpol-windows-x64-v${{ needs.prepare.outputs.version }}-installer.exe`
-              - ✅ Instalasi otomatis ke Program Files
-              - ✅ Shortcut desktop & Start Menu
-              - ✅ Uninstaller terintegrasi
-              - ✅ Icon aplikasi menarik
-              - ✅ GUI mode & Console mode
-            
-            **Portable**
-            - `simdokpol-windows-x64-v${{ needs.prepare.outputs.version }}-portable.zip`
-              - 📁 Extract & run, tidak perlu install
-              - 💾 Cocok untuk USB drive
-            
-            ---
-            
-            ### 🐧 Linux (amd64)
-            
-            **DEB Package (Ubuntu/Debian)**
-            - `simdokpol_${{ needs.prepare.outputs.version }}_amd64.deb`
-              ```bash
-              sudo dpkg -i simdokpol_${{ needs.prepare.outputs.version }}_amd64.deb
-              sudo apt-get install -f
-              ```
-              - ✅ Menu entry otomatis
-              - ✅ Icon desktop
-              - ✅ Systemd integration ready
-            
-            **RPM Package (Fedora/RHEL/CentOS)**
-            - `simdokpol-${{ needs.prepare.outputs.version }}-1.*.rpm`
-              ```bash
-              sudo rpm -i simdokpol-${{ needs.prepare.outputs.version }}-1.*.rpm
-              ```
-            
-            **Portable**
-            - `simdokpol-linux-amd64-v${{ needs.prepare.outputs.version }}-portable.tar.gz`
-              ```bash
-              tar -xzf simdokpol-linux-amd64-v${{ needs.prepare.outputs.version }}-portable.tar.gz
-              cd simdokpol
-              ./start.sh
-              ```
-            
-            ---
-            
-            ### 🍎 macOS (amd64)
-            
-            **DMG Installer (Recommended)**
-            - `simdokpol-macos-amd64-v${{ needs.prepare.outputs.version }}-installer.dmg`
-              - ✅ Drag & drop ke Applications
-              - ✅ macOS App Bundle native
-              - ✅ Icon aplikasi terintegrasi
-              - ✅ Compatible dengan Intel & Apple Silicon (via Rosetta 2)
-            
-            **Portable**
-            - `simdokpol-macos-amd64-v${{ needs.prepare.outputs.version }}-portable.zip`
-              - 📁 Extract & run SIMDOKPOL.app
-            
-            ---
-            
-            ### 🔐 Verifikasi Integritas
-            
-            Gunakan file `checksums.txt` untuk memverifikasi integritas file yang diunduh:
-            
-            **Linux/macOS:**
-            ```bash
-            sha256sum -c checksums.txt
-            ```
-            
-            **Windows (PowerShell):**
-            ```powershell
-            Get-Content checksums.txt | ForEach-Object {
-                $hash, $file = $_ -split '\s+', 2
-                $computed = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-                if ($computed -eq $hash) { 
-                    Write-Host "✓ $file" -ForegroundColor Green 
-                } else { 
-                    Write-Host "✗ $file" -ForegroundColor Red 
-                }
-            }
-            ```
-            
-            ---
-            
-            ### 📝 Petunjuk Instalasi
-            
-            #### Windows
-            1. Download installer `.exe`
-            2. Jalankan installer (Klik kanan → Run as Administrator jika perlu)
-            3. Ikuti wizard instalasi
-            4. Jalankan dari Start Menu atau Desktop shortcut
-            
-            #### Linux (DEB/RPM)
-            1. Download package sesuai distro
-            2. Install menggunakan package manager
-            3. Jalankan dari Application Menu atau terminal: `simdokpol`
-            
-            #### macOS
-            1. Download file `.dmg`
-            2. Buka DMG dan drag SIMDOKPOL.app ke Applications
-            3. Jalankan dari Launchpad atau Applications folder
-            4. Jika muncul warning "from unidentified developer":
-               - Buka System Preferences → Security & Privacy
-               - Klik "Open Anyway"
-            
-            ---
-            
-            ### 🚀 Menjalankan Aplikasi
-            
-            **Sangat Mudah - Tinggal Klik!**
-            
-            Setelah instalasi selesai, cukup jalankan aplikasi:
-            - **Windows**: Klik shortcut di Desktop atau Start Menu
-            - **Linux**: Klik icon di Application Menu atau jalankan `simdokpol` di terminal
-            - **macOS**: Klik SIMDOKPOL.app di Applications folder
-            
-            Aplikasi akan otomatis:
-            - ✅ Membuka browser dan menampilkan halaman aplikasi
-            - ✅ Berjalan di background dengan icon di system tray
-            - ✅ Menampilkan notifikasi saat siap digunakan
-            - ✅ Generate file `.env` dengan JWT secret yang aman secara otomatis
-            - ✅ Membuat folder backups untuk database
-            
-            **Setup Pertama Kali:**
-            - Anda akan diarahkan ke halaman setup untuk membuat akun admin pertama
-            - Ikuti wizard setup yang mudah dan intuitif
-            - File `.env` akan dibuat otomatis dengan konfigurasi keamanan yang optimal
-            - Tidak perlu konfigurasi manual!
-            
-            ---
-            
-            ### 🌐 Virtual Host Setup (Fitur Baru!)
-            
-            Aplikasi sekarang mendukung akses melalui domain lokal yang lebih mudah diingat dan profesional.
-            
-            **Akses Default:**
-            - `http://localhost:8080`
-            
-            **Akses dengan Virtual Host (Opsional):**
-            - `http://simdokpol.local:8080`
-            
-            **Setup Otomatis:**
-            Aplikasi akan mencoba melakukan setup virtual host secara otomatis saat pertama kali dijalankan. Jika memerlukan izin administrator, Anda akan melihat instruksi manual yang jelas di console log aplikasi.
-            
-            **Manual Setup (jika diperlukan):**
-            
-            **Windows (sebagai Administrator):**
-            ```cmd
-            echo 127.0.0.1 simdokpol.local >> C:\Windows\System32\drivers\etc\hosts
-            ipconfig /flushdns
-            ```
-            
-            **Linux/macOS:**
-            ```bash
-            sudo sh -c 'echo "127.0.0.1 simdokpol.local" >> /etc/hosts'
-            ```
-            
-            Setelah setup virtual host berhasil, Anda dapat mengakses aplikasi melalui domain yang lebih profesional tanpa perlu mengingat localhost.
-            
-            ---
-            
-            ### 🆘 Troubleshooting
-            
-            **Virtual Host tidak berfungsi?**
-            - Pastikan Anda menjalankan aplikasi dengan hak administrator atau root untuk setup otomatis
-            - Atau ikuti instruksi manual setup yang muncul di console log aplikasi
-            - Anda tetap dapat menggunakan `localhost:8080` tanpa virtual host
-            - Cek apakah domain sudah terdaftar dengan perintah: `ping simdokpol.local`
-            
-            **Port 8080 sudah digunakan?**
-            - Edit file `.env` di folder instalasi aplikasi
-            - Ganti `PORT=8080` ke port lain (misal `PORT=8081`)
-            - Restart aplikasi
-            
-            **Aplikasi tidak muncul di system tray?**
-            - **Linux**: Pastikan ekstensi AppIndicator terinstall untuk desktop environment Anda
-            - **Windows**: Cek Windows Notification Settings dan pastikan aplikasi diizinkan
-            - **macOS**: Periksa System Preferences → Notifications
-            
-            **Error "cannot open display" di Linux?**
-            - Pastikan aplikasi berjalan di desktop environment dengan X11 atau Wayland
-            - Jika menggunakan SSH, pastikan X11 forwarding diaktifkan
-            
-            **File .env tidak ditemukan?**
-            - Aplikasi akan membuat file `.env` secara otomatis saat pertama kali dijalankan
-            - Jika file hilang atau rusak, hapus dan restart aplikasi untuk regenerasi otomatis
-            - JWT secret key akan di-generate ulang dengan algoritma cryptographically secure
-            
-            **Database error atau migration gagal?**
-            - Pastikan folder `migrations` ada di direktori yang sama dengan executable
-            - Periksa permission folder aplikasi (harus dapat menulis file database)
-            - Cek folder `backups` sudah dibuat otomatis
-            
-            ---
-            
-            ### 📊 What's New in v${{ needs.prepare.outputs.version }}
-            
-            **Fitur Baru:**
-            - 🌐 Virtual Host Setup otomatis untuk domain lokal (simdokpol.local)
-            - 🔐 Auto-generate JWT secret key yang aman saat first run
-            - 💾 Auto-create folder backups untuk database backup
-            - 🎨 Icon aplikasi yang lebih menarik dan konsisten di semua platform
-            - 📦 Installer native yang lebih robust untuk semua platform
-            
-            **Peningkatan:**
-            - 🚀 Performa startup aplikasi lebih cepat
-            - 🔧 Kompatibilitas path migrations untuk semua OS
-            - 🖼️ Prioritas icon berbasis platform untuk systray yang optimal
-            - 📝 Logging yang lebih informatif untuk troubleshooting
-            
-            **Bug Fixes:**
-            - 🐛 Fix template parsing untuk Windows path
-            - 🐛 Fix icon loading di berbagai format (ICO, PNG)
-            - 🐛 Fix database migration path resolution
-            - 🐛 Stability improvements untuk systray integration
-            
-            ---
-            
-            ### 🔒 Keamanan
-            
-            Versi ini mencakup peningkatan keamanan signifikan:
-            - JWT secret key sekarang di-generate menggunakan `crypto/rand` dengan entropi tinggi
-            - File `.env` dibuat dengan permission 0600 (read/write owner only) di Linux/macOS
-            - Validasi input yang lebih ketat untuk konfigurasi virtual host
-            - Protection terhadap path traversal di file operations
-            
-            ---
-            
-            ### 📚 Dokumentasi & Support
-            
-            - 📖 **Dokumentasi Lengkap**: [README.md](https://github.com/muhammad1505/simdokpol)
-            - 🐛 **Laporkan Bug**: [Issues](https://github.com/yourusername/simdokpol/issues)
-            - 💬 **Diskusi & Pertanyaan**: [Discussions](https://github.com/yourusername/simdokpol/discussions)
-            - 📧 **Kontak**: emailbaruku50@gmail.com
-            
-            ---
-            
-            ### 🙏 Kontribusi
-            
-            Kami sangat menghargai kontribusi dari komunitas. Jika Anda ingin berkontribusi:
-            - Fork repository ini
-            - Buat branch untuk fitur baru Anda
-            - Submit pull request dengan deskripsi yang jelas
-            - Pastikan code Anda mengikuti style guide yang ada
-            
-            ---
-            
-            ### 📜 Lisensi
-            
-            SIMDOKPOL dirilis di bawah lisensi MIT. Lihat file LICENSE untuk detail lengkap.
-            
-            ---
-            
-            **Terima kasih telah menggunakan SIMDOKPOL!** 🙏
-            
-            Jika aplikasi ini membantu pekerjaan Anda, pertimbangkan untuk memberikan ⭐ star di repository ini!
+          body_path: release-notes.md
           files: release-assets/*
           draft: false
           prerelease: false
