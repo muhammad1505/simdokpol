@@ -1,0 +1,351 @@
+name: Test Cross-Platform Build
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'web/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/test-build.yml'
+  push:
+    branches:
+      - main
+      - develop
+
+env:
+  APP_NAME: simdokpol
+  GO_VERSION: '1.22'
+  TEST_DIR: test-output
+
+jobs:
+  #=================================================
+  # JOB 1: Test Build di Windows (x64 only)
+  #=================================================
+  test-windows:
+    name: Test Build Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install MinGW (CGO toolchain)
+        run: choco install mingw --force -y --no-progress
+
+      - name: Prepare test environment
+        shell: bash
+        run: |
+          echo "Preparing test environment..."
+          mkdir -p ${{ env.TEST_DIR }}
+          cp -r web migrations ${{ env.TEST_DIR }}/
+          
+          JWT_KEY=$(openssl rand -hex 32)
+          cat > ${{ env.TEST_DIR }}/.env << EOF
+          JWT_SECRET_KEY=${JWT_KEY}
+          DB_DSN=test_db.sqlite?_foreign_keys=on
+          PORT=8080
+          EOF
+
+      - name: Build test executable
+        env:
+          GOARCH: amd64
+          CGO_ENABLED: 1
+        run: go build -v -o ${{ env.TEST_DIR }}/${{ env.APP_NAME }}.exe ./cmd/main.go
+
+      - name: Run smoke test
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          cd ${{ env.TEST_DIR }}
+          
+          Write-Host "Starting application in background for smoke test..."
+          $process = Start-Process -FilePath ".\${{ env.APP_NAME }}.exe" -PassThru -NoNewWindow -RedirectStandardOutput "stdout.log" -RedirectStandardError "stderr.log"
+          
+          Write-Host "Application started with PID: $($process.Id)"
+          
+          # Tunggu maksimal 30 detik sampai server siap
+          $maxWait = 30
+          $waited = 0
+          $serverReady = $false
+          
+          while ($waited -lt $maxWait) {
+            Write-Host "Checking server... ($waited/$maxWait seconds)"
+            Start-Sleep -Seconds 2
+            $waited += 2
+            
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:8080/login" -TimeoutSec 3 -UseBasicParsing
+              if ($response.StatusCode -eq 200) {
+                Write-Host "SUCCESS: Server is ready and responding!"
+                $serverReady = $true
+                break
+              }
+            } catch {
+              # Server belum siap, coba lagi
+              if ($waited -ge $maxWait) {
+                Write-Host "ERROR: Server not responding after $maxWait seconds"
+                Write-Host "Process still running: $($process.HasExited -eq $false)"
+              }
+            }
+          }
+          
+          # Tampilkan log jika gagal
+          if (-not $serverReady) {
+            Write-Host "`n=== STDOUT LOG ==="
+            Get-Content "stdout.log" -ErrorAction SilentlyContinue
+            Write-Host "`n=== STDERR LOG ==="
+            Get-Content "stderr.log" -ErrorAction SilentlyContinue
+          }
+          
+          # Stop proses
+          Write-Host "Stopping application..."
+          if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force
+          }
+          
+          # Exit dengan error jika server tidak siap
+          if (-not $serverReady) {
+            exit 1
+          }
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-windows-x64
+          path: |
+            ${{ env.TEST_DIR }}/stdout.log
+            ${{ env.TEST_DIR }}/stderr.log
+            ${{ env.TEST_DIR }}/*.sqlite
+          retention-days: 7
+
+  #=================================================
+  # JOB 2: Test Build di Linux (amd64)
+  #=================================================
+  test-linux:
+    name: Test Build Linux (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      
+      - name: Install CGO dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc libgtk-3-dev libayatana-appindicator3-dev xvfb
+
+      - name: Prepare test environment
+        run: |
+          echo "Preparing test environment..."
+          mkdir -p ${{ env.TEST_DIR }}
+          cp -r web migrations ${{ env.TEST_DIR }}/
+          
+          JWT_KEY=$(openssl rand -hex 32)
+          cat > ${{ env.TEST_DIR }}/.env << EOF
+          JWT_SECRET_KEY=${JWT_KEY}
+          DB_DSN=test_db.sqlite?_foreign_keys=on
+          PORT=8080
+          EOF
+
+      - name: Build test executable
+        env:
+          CGO_ENABLED: 1
+        run: go build -v -o ${{ env.TEST_DIR }}/${{ env.APP_NAME }} ./cmd/main.go
+
+      - name: Start virtual display
+        run: |
+          echo "Starting Xvfb virtual display..."
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          echo "XVFB_PID=$!" >> $GITHUB_ENV
+          sleep 2
+
+      - name: Run smoke test
+        timeout-minutes: 2
+        env:
+          DISPLAY: :99
+        run: |
+          cd ${{ env.TEST_DIR }}
+          
+          echo "Starting application in background (with virtual display)..."
+          # Jalankan di background, redirect output
+          ./${{ env.APP_NAME }} > stdout.log 2> stderr.log &
+          APP_PID=$!
+          
+          echo "Application started with PID: $APP_PID"
+          
+          # Tunggu maksimal 30 detik sampai server siap
+          MAX_WAIT=30
+          WAITED=0
+          SERVER_READY=false
+          
+          while [ $WAITED -lt $MAX_WAIT ]; do
+            echo "Checking server... ($WAITED/$MAX_WAIT seconds)"
+            sleep 2
+            WAITED=$((WAITED + 2))
+            
+            # Cek apakah proses masih berjalan
+            if ! kill -0 $APP_PID 2>/dev/null; then
+              echo "ERROR: Application process died unexpectedly!"
+              echo ""
+              echo "=== STDOUT LOG ==="
+              cat stdout.log
+              echo ""
+              echo "=== STDERR LOG ==="
+              cat stderr.log
+              exit 1
+            fi
+            
+            # Cek apakah server sudah merespon
+            if curl --fail --silent --show-error --max-time 3 http://localhost:8080/login > /dev/null 2>&1; then
+              echo "SUCCESS: Server is ready and responding!"
+              SERVER_READY=true
+              break
+            fi
+          done
+          
+          # Jika server tidak siap setelah timeout, tampilkan log
+          if [ "$SERVER_READY" = false ]; then
+            echo "ERROR: Server not responding after $MAX_WAIT seconds"
+            echo ""
+            echo "=== STDOUT LOG ==="
+            cat stdout.log
+            echo ""
+            echo "=== STDERR LOG ==="
+            cat stderr.log
+            kill $APP_PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          # Stop aplikasi
+          echo "Stopping application..."
+          kill $APP_PID 2>/dev/null || true
+          sleep 2
+
+      - name: Cleanup virtual display
+        if: always()
+        run: |
+          if [ -n "$XVFB_PID" ]; then
+            kill $XVFB_PID 2>/dev/null || true
+          fi
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-linux-amd64
+          path: |
+            ${{ env.TEST_DIR }}/stdout.log
+            ${{ env.TEST_DIR }}/stderr.log
+            ${{ env.TEST_DIR }}/*.sqlite
+          retention-days: 7
+
+  #=================================================
+  # JOB 3: Test Build di macOS (amd64)
+  #=================================================
+  test-macos:
+    name: Test Build macOS (amd64)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Prepare test environment
+        run: |
+          echo "Preparing test environment..."
+          mkdir -p ${{ env.TEST_DIR }}
+          cp -r web migrations ${{ env.TEST_DIR }}/
+          
+          JWT_KEY=$(openssl rand -hex 32)
+          cat > ${{ env.TEST_DIR }}/.env << EOF
+          JWT_SECRET_KEY=${JWT_KEY}
+          DB_DSN=test_db.sqlite?_foreign_keys=on
+          PORT=8080
+          EOF
+
+      - name: Build test executable
+        env:
+          CGO_ENABLED: 1
+        run: go build -v -o ${{ env.TEST_DIR }}/${{ env.APP_NAME }} ./cmd/main.go
+
+      - name: Run smoke test
+        timeout-minutes: 2
+        run: |
+          cd ${{ env.TEST_DIR }}
+          
+          echo "Starting application in background..."
+          ./${{ env.APP_NAME }} > stdout.log 2> stderr.log &
+          APP_PID=$!
+          
+          echo "Application started with PID: $APP_PID"
+          
+          MAX_WAIT=30
+          WAITED=0
+          SERVER_READY=false
+          
+          while [ $WAITED -lt $MAX_WAIT ]; do
+            echo "Checking server... ($WAITED/$MAX_WAIT seconds)"
+            sleep 2
+            WAITED=$((WAITED + 2))
+            
+            if ! kill -0 $APP_PID 2>/dev/null; then
+              echo "ERROR: Application process died unexpectedly!"
+              echo ""
+              echo "=== STDOUT LOG ==="
+              cat stdout.log
+              echo ""
+              echo "=== STDERR LOG ==="
+              cat stderr.log
+              exit 1
+            fi
+            
+            if curl --fail --silent --show-error --max-time 3 http://localhost:8080/login > /dev/null 2>&1; then
+              echo "SUCCESS: Server is ready and responding!"
+              SERVER_READY=true
+              break
+            fi
+          done
+          
+          if [ "$SERVER_READY" = false ]; then
+            echo "ERROR: Server not responding after $MAX_WAIT seconds"
+            echo ""
+            echo "=== STDOUT LOG ==="
+            cat stdout.log
+            echo ""
+            echo "=== STDERR LOG ==="
+            cat stderr.log
+            kill $APP_PID 2>/dev/null || true
+            exit 1
+          fi
+          
+          echo "Stopping application..."
+          kill $APP_PID 2>/dev/null || true
+          sleep 2
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-macos-amd64
+          path: |
+            ${{ env.TEST_DIR }}/stdout.log
+            ${{ env.TEST_DIR }}/stderr.log
+            ${{ env.TEST_DIR }}/*.sqlite
+          retention-days: 7
