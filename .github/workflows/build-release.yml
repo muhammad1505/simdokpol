@@ -417,7 +417,7 @@ jobs:
       - name: Prepare release package
         run: |
           set -e
-          mkdir -p release/backups  # FIXED: Membuat folder backups untuk Linux
+          mkdir -p release/backups
           cp "build/${{ env.APP_NAME }}" release/
           cp -r web migrations release/
           [ -f README.md ] && cp README.md release/ || true
@@ -448,7 +448,7 @@ jobs:
           
           mkdir -p "${PKG_NAME}/DEBIAN"
           mkdir -p "${PKG_NAME}/opt/${{ env.APP_NAME }}"
-          mkdir -p "${PKG_NAME}/opt/${{ env.APP_NAME }}/backups"  # FIXED: Folder backups di package
+          mkdir -p "${PKG_NAME}/opt/${{ env.APP_NAME }}/backups"
           mkdir -p "${PKG_NAME}/usr/share/applications"
           mkdir -p "${PKG_NAME}/usr/share/icons/hicolor/256x256/apps"
           mkdir -p "${PKG_NAME}/usr/bin"
@@ -519,7 +519,7 @@ jobs:
           
           TEMP_DIR=$(mktemp -d)
           mkdir -p "${TEMP_DIR}/${{ env.APP_NAME }}-${VERSION}"
-          mkdir -p "${TEMP_DIR}/${{ env.APP_NAME }}-${VERSION}/backups"  # FIXED: Folder backups di RPM
+          mkdir -p "${TEMP_DIR}/${{ env.APP_NAME }}-${VERSION}/backups"
           cp -r release/* "${TEMP_DIR}/${{ env.APP_NAME }}-${VERSION}/"
           
           cd "${TEMP_DIR}"
@@ -546,7 +546,7 @@ jobs:
           
           %install
           mkdir -p %{buildroot}/opt/%{name}
-          mkdir -p %{buildroot}/opt/%{name}/backups  # FIXED: Folder backups di install
+          mkdir -p %{buildroot}/opt/%{name}/backups
           mkdir -p %{buildroot}/usr/bin
           mkdir -p %{buildroot}/usr/share/applications
           mkdir -p %{buildroot}/usr/share/icons/hicolor/256x256/apps
@@ -654,7 +654,7 @@ jobs:
           
           mkdir -p "${BUNDLE_NAME}/Contents/MacOS"
           mkdir -p "${BUNDLE_NAME}/Contents/Resources"
-          mkdir -p "${BUNDLE_NAME}/Contents/Resources/backups"  # FIXED: Membuat folder backups untuk Mac
+          mkdir -p "${BUNDLE_NAME}/Contents/Resources/backups"
           
           cp "build/${{ env.APP_NAME }}" "${BUNDLE_NAME}/Contents/MacOS/${{ env.APP_NAME }}"
           
@@ -685,38 +685,6 @@ jobs:
           else
             echo "WARNING: Icon not found at $ICON_SRC"
           fi
-          
-          cat > "${BUNDLE_NAME}/Contents/Info.plist" << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>${{ env.APP_NAME }}</string>
-              <key>CFBundleIconFile</key>
-              <string>icon</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.simdokpol.app</string>
-              <key>CFBundleName</key>
-              <string>${APP_NAME}</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>${{ needs.prepare.outputs.version }}</string>
-              <key>CFBundleVersion</key>
-              <string>${{ needs.prepare.outputs.version }}</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-              <key>CFBundleDisplayName</key>
-              <string>SIMDOKPOL</string>
-          </dict>
-          </plist>
-          EOF
-          
-          # FIXED: Hapus bagian yang membuat .env.example karena sudah tidak diperlukan
-          # Aplikasi akan auto-generate .env saat first run berdasarkan main.go
           
           cat > "${BUNDLE_NAME}/Contents/MacOS/launch.sh" << 'EOF'
           #!/bin/bash
@@ -909,46 +877,171 @@ jobs:
             - ✅ Membuka browser dan menampilkan halaman aplikasi
             - ✅ Berjalan di background dengan icon di system tray
             - ✅ Menampilkan notifikasi saat siap digunakan
+            - ✅ Generate file `.env` dengan JWT secret yang aman secara otomatis
+            - ✅ Membuat folder backups untuk database
             
             **Setup Pertama Kali:**
             - Anda akan diarahkan ke halaman setup untuk membuat akun admin pertama
             - Ikuti wizard setup yang mudah dan intuitif
+            - File `.env` akan dibuat otomatis dengan konfigurasi keamanan yang optimal
             - Tidak perlu konfigurasi manual!
+            
+            ---
+            
+            ### 🌐 Virtual Host Setup (Fitur Baru!)
+            
+            Aplikasi sekarang mendukung akses melalui domain lokal yang lebih mudah diingat dan profesional.
+            
+            **Akses Default:**
+            - `http://localhost:8080`
+            
+            **Akses dengan Virtual Host (Opsional):**
+            - `http://simdokpol.local:8080`
+            
+            **Setup Otomatis:**
+            Aplikasi akan mencoba melakukan setup virtual host secara otomatis saat pertama kali dijalankan. Jika memerlukan izin administrator, Anda akan melihat instruksi manual yang jelas di console log aplikasi.
+            
+            **Manual Setup (jika diperlukan):**
+            
+            **Windows (sebagai Administrator):**
+            ```cmd
+            echo 127.0.0.1 simdokpol.local >> C:\Windows\System32\drivers\etc\hosts
+            ipconfig /flushdns
+            ```
+            
+            **Linux/macOS:**
+            ```bash
+            sudo sh -c 'echo "127.0.0.1 simdokpol.local" >> /etc/hosts'
+            ```
+            
+            Setelah setup virtual host berhasil, Anda dapat mengakses aplikasi melalui domain yang lebih profesional tanpa perlu mengingat localhost.
             
             ---
             
             ### 🆘 Troubleshooting
             
+            **Virtual Host tidak berfungsi?**
+            - Pastikan Anda menjalankan aplikasi dengan hak administrator atau root untuk setup otomatis
+            - Atau ikuti instruksi manual setup yang muncul di console log aplikasi
+            - Anda tetap dapat menggunakan `localhost:8080` tanpa virtual host
+            - Cek apakah domain sudah terdaftar dengan perintah: `ping simdokpol.local`
+            
             **Port 8080 sudah digunakan?**
-            - Edit `.env` dan ganti `PORT=8080` ke port lain (misal `PORT=8081`)
+            - Edit file `.env` di folder instalasi aplikasi
+            - Ganti `PORT=8080` ke port lain (misal `PORT=8081`)
+            - Restart aplikasi
             
             **Aplikasi tidak muncul di system tray?**
-            - Linux: Pastikan ekstensi AppIndicator terinstall
-            - Windows: Cek Windows Notification Settings
+            - **Linux**: Pastikan ekstensi AppIndicator terinstall untuk desktop environment Anda
+            - **Windows**: Cek Windows Notification Settings dan pastikan aplikasi diizinkan
+            - **macOS**: Periksa System Preferences → Notifications
             
             **Error "cannot open display" di Linux?**
-            - Pastikan running di desktop environment dengan X11/Wayland
+            - Pastikan aplikasi berjalan di desktop environment dengan X11 atau Wayland
+            - Jika menggunakan SSH, pastikan X11 forwarding diaktifkan
+            
+            **File .env tidak ditemukan?**
+            - Aplikasi akan membuat file `.env` secara otomatis saat pertama kali dijalankan
+            - Jika file hilang atau rusak, hapus dan restart aplikasi untuk regenerasi otomatis
+            - JWT secret key akan di-generate ulang dengan algoritma cryptographically secure
+            
+            **Database error atau migration gagal?**
+            - Pastikan folder `migrations` ada di direktori yang sama dengan executable
+            - Periksa permission folder aplikasi (harus dapat menulis file database)
+            - Cek folder `backups` sudah dibuat otomatis
             
             ---
             
             ### 📊 What's New in v${{ needs.prepare.outputs.version }}
             
-            - 🎨 Icon aplikasi yang lebih menarik
-            - 📦 Installer native untuk semua platform
-            - 🚀 Performa lebih cepat
-            - 🐛 Bug fixes dan stability improvements
+            **Fitur Baru:**
+            - 🌐 Virtual Host Setup otomatis untuk domain lokal (simdokpol.local)
+            - 🔐 Auto-generate JWT secret key yang aman saat first run
+            - 💾 Auto-create folder backups untuk database backup
+            - 🎨 Icon aplikasi yang lebih menarik dan konsisten di semua platform
+            - 📦 Installer native yang lebih robust untuk semua platform
+            
+            **Peningkatan:**
+            - 🚀 Performa startup aplikasi lebih cepat
+            - 🔧 Kompatibilitas path migrations untuk semua OS
+            - 🖼️ Prioritas icon berbasis platform untuk systray yang optimal
+            - 📝 Logging yang lebih informatif untuk troubleshooting
+            
+            **Bug Fixes:**
+            - 🐛 Fix template parsing untuk Windows path
+            - 🐛 Fix icon loading di berbagai format (ICO, PNG)
+            - 🐛 Fix database migration path resolution
+            - 🐛 Stability improvements untuk systray integration
             
             ---
             
-            ### 🤝 Kontribusi & Support
+            ### 🔒 Keamanan
             
-            - 📖 Dokumentasi: [README.md](https://github.com/yourusername/simdokpol)
-            - 🐛 Laporkan bug: [Issues](https://github.com/yourusername/simdokpol/issues)
-            - 💬 Diskusi: [Discussions](https://github.com/yourusername/simdokpol/discussions)
+            Versi ini mencakup peningkatan keamanan signifikan:
+            - JWT secret key sekarang di-generate menggunakan `crypto/rand` dengan entropi tinggi
+            - File `.env` dibuat dengan permission 0600 (read/write owner only) di Linux/macOS
+            - Validasi input yang lebih ketat untuk konfigurasi virtual host
+            - Protection terhadap path traversal di file operations
+            
+            ---
+            
+            ### 📚 Dokumentasi & Support
+            
+            - 📖 **Dokumentasi Lengkap**: [README.md](https://github.com/muhammad1505/simdokpol)
+            - 🐛 **Laporkan Bug**: [Issues](https://github.com/yourusername/simdokpol/issues)
+            - 💬 **Diskusi & Pertanyaan**: [Discussions](https://github.com/yourusername/simdokpol/discussions)
+            - 📧 **Kontak**: emailbaruku50@gmail.com
+            
+            ---
+            
+            ### 🙏 Kontribusi
+            
+            Kami sangat menghargai kontribusi dari komunitas. Jika Anda ingin berkontribusi:
+            - Fork repository ini
+            - Buat branch untuk fitur baru Anda
+            - Submit pull request dengan deskripsi yang jelas
+            - Pastikan code Anda mengikuti style guide yang ada
+            
+            ---
+            
+            ### 📜 Lisensi
+            
+            SIMDOKPOL dirilis di bawah lisensi MIT. Lihat file LICENSE untuk detail lengkap.
             
             ---
             
             **Terima kasih telah menggunakan SIMDOKPOL!** 🙏
+            
+            Jika aplikasi ini membantu pekerjaan Anda, pertimbangkan untuk memberikan ⭐ star di repository ini!
           files: release-assets/*
           draft: false
-          prerelease: false
+          prerelease: falseContents/Info.plist" << EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>${{ env.APP_NAME }}</string>
+              <key>CFBundleIconFile</key>
+              <string>icon</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.simdokpol.app</string>
+              <key>CFBundleName</key>
+              <string>${APP_NAME}</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${{ needs.prepare.outputs.version }}</string>
+              <key>CFBundleVersion</key>
+              <string>${{ needs.prepare.outputs.version }}</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>CFBundleDisplayName</key>
+              <string>SIMDOKPOL</string>
+          </dict>
+          </plist>
+          EOF
+          
+          cat > "${BUNDLE_NAME}/
