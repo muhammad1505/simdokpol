@@ -686,14 +686,41 @@ jobs:
             echo "WARNING: Icon not found at $ICON_SRC"
           fi
           
-          cat > "${BUNDLE_NAME}/Contents/MacOS/launch.sh" << 'EOF'
-          #!/bin/bash
+          cat > "${BUNDLE_NAME}/Contents/Info.plist" << 'PLISTEOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>simdokpol</string>
+              <key>CFBundleIconFile</key>
+              <string>icon</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.simdokpol.app</string>
+              <key>CFBundleName</key>
+              <string>SIMDOKPOL</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${{ needs.prepare.outputs.version }}</string>
+              <key>CFBundleVersion</key>
+              <string>${{ needs.prepare.outputs.version }}</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>CFBundleDisplayName</key>
+              <string>SIMDOKPOL</string>
+          </dict>
+          </plist>
+          PLISTEOF
           
+          cat > "${BUNDLE_NAME}/Contents/MacOS/launch.sh" << 'LAUNCHEOF'
+          #!/bin/bash
           RESOURCES_DIR="$(dirname "$0")/../Resources"
           cd "$RESOURCES_DIR"
-          
-          "$( dirname "$0")/${{ env.APP_NAME }}"
-          EOF
+          "$(dirname "$0")/simdokpol"
+          LAUNCHEOF
           chmod +x "${BUNDLE_NAME}/Contents/MacOS/launch.sh"
 
       - name: Create DMG installer
@@ -1015,33 +1042,4 @@ jobs:
             Jika aplikasi ini membantu pekerjaan Anda, pertimbangkan untuk memberikan ⭐ star di repository ini!
           files: release-assets/*
           draft: false
-          prerelease: falseContents/Info.plist" << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>${{ env.APP_NAME }}</string>
-              <key>CFBundleIconFile</key>
-              <string>icon</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.simdokpol.app</string>
-              <key>CFBundleName</key>
-              <string>${APP_NAME}</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleShortVersionString</key>
-              <string>${{ needs.prepare.outputs.version }}</string>
-              <key>CFBundleVersion</key>
-              <string>${{ needs.prepare.outputs.version }}</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-              <key>CFBundleDisplayName</key>
-              <string>SIMDOKPOL</string>
-          </dict>
-          </plist>
-          EOF
-          
-          cat > "${BUNDLE_NAME}/
+          prerelease: false
