@@ -67,7 +67,6 @@ func (v *VHostSetup) IsSetup() (bool, error) {
 	defer file.Close()
 
 	scanner := bufio.NewScanner(file)
-	searchString := fmt.Sprintf("%s %s", v.ip, v.domain)
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
