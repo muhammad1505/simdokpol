@@ -70,7 +70,12 @@ func (v *VHostSetup) IsSetup() (bool, error) {
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.Contains(line, v.domain) && strings.Contains(line, v.ip) {
+		// Skip komentar
+		if strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Cek apakah baris mengandung IP dan domain kita
+		if strings.Contains(line, v.ip) && strings.Contains(line, v.domain) {
 			return true, nil
 		}
 	}
@@ -192,12 +197,15 @@ func (v *VHostSetup) showManualInstructions() {
 	switch runtime.GOOS {
 	case "windows":
 		log.Println("1. Buka Command Prompt atau PowerShell sebagai Administrator")
-		log.Println("2. Jalankan perintah:")
+		log.Println("2. Jalankan perintah berikut:")
+		log.Printf("   echo %s %s >> %s\n", v.ip, v.domain, v.hostsFile)
+		log.Println("\n   ATAU edit manual dengan notepad:")
 		log.Printf("   notepad %s\n", v.hostsFile)
-		log.Println("3. Tambahkan baris berikut di akhir file:")
+		log.Println("   Kemudian tambahkan baris berikut di akhir file:")
 		log.Printf("   %s %s\n", v.ip, v.domain)
-		log.Println("4. Simpan file dan tutup notepad")
-		log.Println("5. Jalankan: ipconfig /flushdns")
+		log.Println("\n3. Simpan file (jika menggunakan notepad)")
+		log.Println("4. Flush DNS cache dengan perintah:")
+		log.Println("   ipconfig /flushdns")
 
 	case "darwin":
 		log.Println("1. Buka Terminal")
